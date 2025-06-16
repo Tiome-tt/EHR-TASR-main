@@ -36,9 +36,15 @@ def analyze_timeseries(df, name="Dataset"):
 
     readmissions = df.groupby(['PatientID', 'VisitID'])['Readmission'].first().groupby('PatientID').mean().mean()
 
+    avg_records_per_visit_per_patient = (
+        df.groupby('PatientID').apply(lambda g: len(g) / g['VisitID'].nunique())
+        .mean()
+    )
+
     print(f"📊 {name} Statistics:")
     print(f"Total Patients: {total_patients}")
     print(f"Avg Visits per Patient: {avg_visits_per_patient:.2f}")
+    print(f"Avg Records per Visit per Patient: {avg_records_per_visit_per_patient:.2f}")
     print(f"Dead: {dead}, Alive: {alive}")
     print(f"Mortality Rate: {mortality_rate:.2%}")
     print(f"Avg LOS: {avg_los:.2f} days")
@@ -113,3 +119,27 @@ deceased_cmps_iv = mimic4_cmps[mimic4_cmps['PatientID'].isin(deceased_ids_iv)]
 
 print("\n\n💀 [MIMIC-IV] Statistics for Dead Patients:")
 top_conditions_procedures(deceased_cmps_iv, "MIMIC-IV")
+
+
+# Physiological Features Statistics
+def analyze_physiological_stats(df, name="Dataset"):
+    physio_features = [
+        'Age', 'Diastolic blood pressure', 'Systolic blood pressure',
+        'Mean blood pressure', 'Heart Rate', 'Respiratory rate',
+        'Temperature', 'Oxygen saturation', 'Fraction inspired oxygen',
+        'Glucose', 'PH'
+    ]
+
+    print(f"\n🧬 {name} - Min and Max Values for Physiological Features:")
+
+    for feature in physio_features:
+        if feature in df.columns:
+            min_val = df[feature].min()
+            max_val = df[feature].max()
+            print(f"{feature}: Min={min_val:.2f}, Max={max_val:.2f}")
+        else:
+            print(f"{feature}: ❌ Not found in dataset")
+
+# Analyze physiological features
+analyze_physiological_stats(mimic3_df, "MIMIC-III")
+analyze_physiological_stats(mimic4_df, "MIMIC-IV")
