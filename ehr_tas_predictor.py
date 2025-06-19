@@ -8,7 +8,7 @@ import torch, torch.nn as nn, torch.optim as optim
 
 from config.config import (TASK, EPOCHS, BATCH_SIZE, LR, HIDDEN,
                            LOS_TOLERANCE, DATASET, MLP_HIDDEN)
-from model.ehrPredictModel import MortalityClassifier
+from model.ehrPredictModel import EHRPredictor
 
 # ---------- config ----------
 TASK        = TASK.lower()
@@ -99,7 +99,7 @@ def main():
     # ---------- Model ----------
     device = "cuda" if torch.cuda.is_available() else "cpu"
     out_dim = 3 if TASK == "multitask" else 1
-    model = MortalityClassifier(ds_tr.x[0].shape[1], HIDDEN,
+    model = EHRPredictor(ds_tr.x[0].shape[1], HIDDEN,
                                 mlp_hidden=MLP_HIDDEN,
                                 out_dim=out_dim).to(device)
 

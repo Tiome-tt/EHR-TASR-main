@@ -1,10 +1,8 @@
-# -*- coding: utf-8 -*-
 import torch
 import torch.nn as nn
 
-
 class PatientEncoder(nn.Module):
-    """双向 LSTM，取 (h_fwd_last || h_bwd_last) 作为患者向量"""
+    """Bidirectional LSTM, using (h_fwd_last || h_bwd_last) as the patient representation"""
     def __init__(self, dim_in: int, hidden: int = 128, n_layers: int = 1):
         super().__init__()
         self.rnn = nn.LSTM(
@@ -18,12 +16,10 @@ class PatientEncoder(nn.Module):
             x, lengths, batch_first=True, enforce_sorted=False
         )
         _, (h_n, _) = self.rnn(packed)        # [2*n_layers, B, H]
-        # 连接最后一层的正向 + 反向
         return torch.cat((h_n[-2], h_n[-1]), dim=-1)   # [B, 2H]
 
 
-class MortalityClassifier(nn.Module):
-    """PatientEncoder → MLP → logit/值"""
+class EHRPredictor(nn.Module):
     def __init__(self,
                  dim_in: int,
                  hidden: int = 128,
@@ -36,11 +32,11 @@ class MortalityClassifier(nn.Module):
             nn.Linear(2 * hidden, mlp_hidden),
             nn.ReLU(),
             nn.Dropout(dropout),
-            nn.Linear(mlp_hidden, out_dim)    # out_dim 1(单任务) | 3(多任务)
+            nn.Linear(mlp_hidden, out_dim)    # out_dim 1(single task) | 3(multitask)
         )
 
     def forward(self, x, mask):
         z = self.encoder(x, mask)
         out = self.mlp(z)
-        # 单输出直接 squeeze，三输出保持 [B,3]
+        # single task: squeeze, multitask: [B,3]
         return out.squeeze(-1) if out.shape[-1] == 1 else out
