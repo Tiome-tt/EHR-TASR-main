@@ -1,0 +1,24 @@
+numpy == 2.2.6
+pandas == 2.3.0
+notebook == 7.4.3
+jupyterlab == 4.4.3
+ipykernel == 6.29.5
+nbconvert == 7.16.6
+jupyter_client == 8.6.3
+traitlets == 5.14.3
+
+scikit-learn==1.7.0
+scipy==1.15.3
+joblib==1.5.1
+threadpoolctl==3.6.0
+
+tqdm==4.67.1
+
+torch==2.7.1
+torchvision==0.22.1
+torchaudio==2.7.1
+torchmetrics==1.7.3
+pytorch-lightning==2.1.3
+
+
+
