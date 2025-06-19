@@ -18,7 +18,7 @@ LOS_TOLERANCE = 0.25
 # train
 EPOCHS      = 30
 BATCH_SIZE  = 256
-LR          = 0.0005
+LR          = 0.001
 HIDDEN      = 128
 MLP_HIDDEN  = 64
 PRECISION   = "16-mixed"
