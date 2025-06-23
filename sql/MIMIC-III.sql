@@ -2,22 +2,36 @@
 DROP TABLE IF EXISTS format_mimic3;
 
 CREATE TABLE format_mimic3 AS
-WITH base_info AS (
-  SELECT 
-    p.subject_id AS patientid,
-    a.hadm_id AS visitid,
-    a.admittime AS admissiontime,
-    a.dischtime AS dischargetime,
+
+WITH base_info_raw AS (
+  SELECT
+    p.subject_id      AS patientid,
+    a.hadm_id         AS visitid,
+    a.admittime       AS admissiontime,
+    a.dischtime       AS dischargetime,
+    LEAD(a.admittime) OVER (
+      PARTITION BY p.subject_id ORDER BY a.admittime
+    )                 AS next_admit,               -- 新增
     CASE WHEN p.dod_hosp IS NOT NULL THEN 1 ELSE 0 END AS outcome,
     ROUND(EXTRACT(EPOCH FROM (a.dischtime - a.admittime)) / 86400.0, 2) AS los,
-    CASE WHEN LEAD(a.admittime) OVER (PARTITION BY p.subject_id ORDER BY a.admittime) IS NOT NULL THEN 1 ELSE 0 END AS readmission,
     CASE WHEN LOWER(p.gender) = 'm' THEN 1 ELSE 0 END AS sex,
-    CASE 
+    CASE
       WHEN DATE_PART('year', a.admittime) - DATE_PART('year', p.dob) >= 300 THEN 90
       ELSE DATE_PART('year', a.admittime) - DATE_PART('year', p.dob)
     END AS age
   FROM patients p
   JOIN admissions a ON p.subject_id = a.subject_id
+),
+
+base_info AS (
+  SELECT
+    *,
+    CASE
+      WHEN next_admit IS NOT NULL
+       AND next_admit <= dischargetime + INTERVAL '30 days'
+      THEN 1 ELSE 0
+    END AS readmission
+  FROM base_info_raw
 ),
 
 time_windows AS (
@@ -353,4 +367,3 @@ joined AS (
 
 SELECT * FROM joined
 ORDER BY "PatientID", "VisitID", "RecordTime";
-

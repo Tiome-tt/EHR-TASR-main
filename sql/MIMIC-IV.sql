@@ -3,26 +3,36 @@ DROP TABLE IF EXISTS format_mimic4;
 
 CREATE TABLE format_mimic4 AS
 
-WITH base_info AS (
-  SELECT 
-    p.subject_id AS patientid,
-    a.hadm_id AS visitid,
-    a.admittime AS admissiontime,
-    a.dischtime AS dischargetime,
-    CASE WHEN a.deathtime IS NOT NULL THEN 1 ELSE 0 END AS outcome,
+WITH base_info_raw AS (
+  SELECT
+    p.subject_id              AS patientid,
+    a.hadm_id                 AS visitid,
+    a.admittime               AS admissiontime,
+    a.dischtime               AS dischargetime,
+    LEAD(a.admittime) OVER (
+      PARTITION BY p.subject_id ORDER BY a.admittime
+    )                         AS next_admit,      -- 新增
+    CASE WHEN a.deathtime IS NOT NULL THEN 1 ELSE 0 END        AS outcome,
     ROUND(EXTRACT(EPOCH FROM (a.dischtime - a.admittime)) / 86400.0, 2) AS los,
-    CASE 
-      WHEN LEAD(a.admittime) OVER (PARTITION BY p.subject_id ORDER BY a.admittime) IS NOT NULL 
-      THEN 1 ELSE 0 
-    END AS readmission,
-    CASE WHEN LOWER(p.gender) = 'm' THEN 1 ELSE 0 END AS sex,
-    CASE 
+    CASE WHEN LOWER(p.gender) = 'm' THEN 1 ELSE 0 END          AS sex,
+    CASE
       WHEN p.anchor_age IS NOT NULL AND p.anchor_year IS NOT NULL THEN
         ROUND((p.anchor_age + DATE_PART('year', a.admittime) - p.anchor_year)::numeric, 1)
       ELSE NULL
     END AS age
-  FROM mimiciv_hosp.patients p
+  FROM mimiciv_hosp.patients   p
   JOIN mimiciv_hosp.admissions a ON p.subject_id = a.subject_id
+),
+
+base_info AS (
+  SELECT
+    *,
+    CASE
+      WHEN next_admit IS NOT NULL
+       AND next_admit <= dischargetime + INTERVAL '30 days'
+      THEN 1 ELSE 0
+    END AS readmission
+  FROM base_info_raw
 ),
 
 time_windows AS (
@@ -353,4 +363,3 @@ joined AS (
 
 SELECT * FROM joined
 ORDER BY "PatientID", "VisitID", "RecordTime";
-
