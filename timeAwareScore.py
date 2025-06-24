@@ -178,13 +178,17 @@ if __name__ == "__main__":
         tmp = df_tr[c].clip(CLIP_LOW, CLIP_HIGH)
         stats[c] = (tmp.min(), tmp.max())
 
+    # for df_ in (df_tr, df_val, df_te):
+    #     for c, (mn, mx) in stats.items():
+    #         result = robust_minmax(df_[c], mn, mx, CLIP_LOW, CLIP_HIGH)
+    #         result = np.nan_to_num(result, nan=0.0).astype(np.float32)
+    #         if df_[c].dtype != np.float32:
+    #             df_[c] = df_[c].astype(np.float32)
+    #         df_.loc[:, c] = result
     for df_ in (df_tr, df_val, df_te):
         for c, (mn, mx) in stats.items():
             result = robust_minmax(df_[c], mn, mx, CLIP_LOW, CLIP_HIGH)
-            result = np.nan_to_num(result, nan=0.0).astype(np.float32)
-            if df_[c].dtype != np.float32:
-                df_[c] = df_[c].astype(np.float32)
-            df_.loc[:, c] = result
+            df_.loc[:, c] = np.nan_to_num(result, nan=0.0).astype(np.float32)
 
     # Save results
     label_cols = ["Outcome", "LOS", "Readmission"]
@@ -197,3 +201,32 @@ if __name__ == "__main__":
     print("----------Finished----------")
     for tag, d in zip(["train", "val", "test"], [df_tr, df_val, df_te]):
         print(f"{tag:5}", d.shape)
+
+# split CMPs file
+print("----------Split CMPs file----------")
+
+# datapath
+CMP_CSV   = f"{ROOT}/data/{DATASET}/preprocessed/CMPs_{DATASET}.csv"
+CMP_COLS  = ["PatientID", "VisitID",
+             "Conditions_Long", "Medications", "Procedures_Long"]
+
+df_cmp = pd.read_csv(CMP_CSV, usecols=CMP_COLS)
+
+# unique set
+pids_tr  = set(df_tr["PatientID"].unique())
+pids_val = set(df_val["PatientID"].unique())
+pids_te  = set(df_te["PatientID"].unique())
+
+df_cmp_tr  = df_cmp[df_cmp["PatientID"].isin(pids_tr)]
+df_cmp_val = df_cmp[df_cmp["PatientID"].isin(pids_val)]
+df_cmp_te  = df_cmp[df_cmp["PatientID"].isin(pids_te)]
+
+# save to csv
+df_cmp_tr.to_csv(f"{OUT_DIR}/train_cmps.csv", index=False)
+df_cmp_val.to_csv(f"{OUT_DIR}/val_cmps.csv",   index=False)
+df_cmp_te.to_csv(f"{OUT_DIR}/test_cmps.csv",  index=False)
+
+print("CMPs split saved:",
+      {k: v.shape for k, v in
+       zip(["train", "val", "test"],
+           [df_cmp_tr, df_cmp_val, df_cmp_te])})
