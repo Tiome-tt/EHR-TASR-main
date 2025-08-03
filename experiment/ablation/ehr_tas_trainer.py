@@ -1,15 +1,18 @@
-# best_auprc
 import math, joblib, numpy as np, pandas as pd
 from pathlib import Path
-from sklearn.preprocessing import FunctionTransformer
-from sklearn.metrics import (roc_auc_score,
+from sklearn.preprocessing import StandardScaler, FunctionTransformer
+from sklearn.metrics import (accuracy_score, roc_auc_score,
                              average_precision_score, f1_score,
-                             mean_absolute_error, recall_score, precision_score)
+                             mean_absolute_error,
+                             precision_score, recall_score)
 import torch, torch.nn as nn, torch.optim as optim
 
 from config.config import (TASK, EPOCHS, BATCH_SIZE, LR, HIDDEN,
-                           LOS_TOLERANCE, DATASET, MLP_HIDDEN)
+                           LOS_TOLERANCE, DATASET, MLP_HIDDEN, ROOT)
 from model.ehrPredictModel import EHRPredictor
+import os
+
+os.chdir(ROOT)
 
 # ---------- config ----------
 TASK        = TASK.lower()
@@ -19,6 +22,8 @@ LR          = LR
 HIDDEN      = HIDDEN
 MLP_HIDDEN  = MLP_HIDDEN
 LOS_TOL     = LOS_TOLERANCE
+TIME_AWARE_SCORE = False  # Whether to remove the time-aware score column
+THRESHOLD_CLASSIFICATION = False  # Whether to set the classification threshold to 0.5
 
 SPLIT_DIR = Path(f"data/{DATASET}/preprocessed/splits")
 CACHE_DIR = Path(f"data/{DATASET}/preprocessed/cache")
@@ -42,24 +47,32 @@ def coll(batch):
 
 def main():
 
+    # load data
     def load_split(split: str):
         X = pd.read_csv(SPLIT_DIR / f"{split}_features.csv")
-        y_all = pd.read_csv(SPLIT_DIR / f"{split}_labels.csv")[[
-            "PatientID", "VisitID", "Outcome", "LOS", "Readmission"]]
+        y = pd.read_csv(SPLIT_DIR / f"{split}_labels.csv")[["PatientID",
+                                                           "Outcome", "LOS",
+                                                           "Readmission"]]
+        return X, y.drop_duplicates("PatientID")
 
-        if TASK == "readmission":
-            y = (y_all.sort_values(["PatientID", "VisitID"])
-                 .groupby("PatientID", as_index=False)
-                 .tail(1))  # ⇦ keep LAST
-        else:
-            y = (y_all.sort_values(["PatientID", "VisitID"])
-                 .groupby("PatientID", as_index=False)
-                 .head(1))
-
-        return X, y
     # wheather to load cache file
     SAMPLE_PATH = SPLIT_DIR / "train_features.csv"
-    NUM_COLS = pd.read_csv(SAMPLE_PATH, nrows=0).columns.difference(["PatientID"]).tolist()
+
+    ALL_COLS = pd.read_csv(SAMPLE_PATH, nrows=0).columns
+    if DATASET == "mimic3":
+        DROP_COLS = [f"D{i}" for i in range(24)]
+    elif DATASET == "mimic4":
+        DROP_COLS = [f"D{i}" for i in range(12)]
+
+    if not TIME_AWARE_SCORE:
+        DROP_COLS = []
+
+    NUM_COLS = (
+        ALL_COLS
+        .difference(["PatientID"], sort=False)
+        .difference(DROP_COLS, sort=False)
+        .tolist()
+    )
 
     SCALER_PATH = CACHE_DIR / "scaler.pkl"
 
@@ -102,7 +115,7 @@ def main():
     ds_tr = PatientDS(CACHE_DIR/"train.npz")
     ds_va = PatientDS(CACHE_DIR/"val.npz")
     dl_tr = torch.utils.data.DataLoader(ds_tr, BATCH_SIZE, True,  collate_fn=coll)
-    dl_va = torch.utils.data.DataLoader(ds_va, BATCH_SIZE, True, collate_fn=coll)
+    dl_va = torch.utils.data.DataLoader(ds_va, BATCH_SIZE, False, collate_fn=coll)
 
     # ---------- Model ----------
     device = "cuda" if torch.cuda.is_available() else "cpu"
@@ -129,30 +142,20 @@ def main():
 
     optimizer = optim.AdamW(model.parameters(), lr=LR)
 
-    # ---------- define the best threshold (sensitivity-driven) ----------
-    def best_sens_threshold(y_true, y_prob):
+    # ---------- define the best threshold ----------
+    def best_f1_threshold(y_true, y_prob):
         ths = np.linspace(0.05, 0.95, 19)
-        sens = [recall_score(y_true, y_prob >= t) for t in ths]
-        i   = int(np.argmax(sens))
-        return ths[i], sens[i]
+        f1s = [f1_score(y_true, y_prob >= t) for t in ths]
+        i   = int(np.argmax(f1s))
+        return ths[i], f1s[i]
 
-    def min_p_sens(y_true, y_prob):
-        ths = np.linspace(0.05, 0.95, 19)
-        best = 0.0
-        for t in ths:
-            p = precision_score(y_true, y_prob >= t, zero_division=0)
-            r = recall_score(y_true, y_prob >= t)
-            best = max(best, min(p, r))
-        return best
-
-    # ---------- train/val loop ----------
     def run(loader, train):
         model.train(train)
         ys, ps, tot = [], [], 0.
         with torch.set_grad_enabled(train):
             for x, mask, y in loader:
                 x, mask, y = x.to(device), mask.to(device), y.to(device)
-                pred = model(x, mask)
+                pred = model(x, mask)  # logits
                 loss = criterion(pred, y)
                 if train:
                     optimizer.zero_grad()
@@ -161,59 +164,46 @@ def main():
                 tot += loss.item() * len(y)
                 ys.append(y.cpu().numpy())
                 ps.append(pred.detach().cpu().numpy())
-        ys = np.concatenate(ys); ps = np.concatenate(ps)
-        if TASK in {"outcome","readmission"}:
-            prob = torch.sigmoid(torch.tensor(ps)).numpy()
-            met = dict(
-                auroc=roc_auc_score(ys, prob),
-                auprc=average_precision_score(ys, prob),
-                minps=min_p_sens(ys, prob)  # ← 新增
 
-            )
+        ys = np.concatenate(ys)
+        ps = np.concatenate(ps)
+        prob = torch.sigmoid(torch.tensor(ps)).numpy()
 
-        elif TASK == "los":
-            met = dict(mae=mean_absolute_error(ys, ps),
-                       rmse=math.sqrt(((ys - ps) ** 2).mean()),
-                       acc1=(np.abs(ys - ps) <= LOS_TOL).mean())
-        else:
-            prob = torch.sigmoid(torch.tensor(ps[:, 0])).numpy()
-            met = dict(out_f1=f1_score(ys[:, 0], prob >= 0.5),
-                       out_sens=recall_score(ys[:, 0], prob >= 0.5))
-        met["loss"] = tot / len(loader.dataset)
-        return met, ys, ps
 
-    # ---------- training ----------
-    STOP_KEY = "auroc"
+        precision = precision_score(ys, prob >= 0.5)
+        recall = recall_score(ys, prob >= 0.5)
+        min_ps = min(precision, recall)
+
+        met = dict(
+            auroc=roc_auc_score(ys, prob),
+            auprc=average_precision_score(ys, prob),
+            minps=min_ps,
+            loss=tot / len(loader.dataset),
+        )
+        return met, ys, prob
+
+    STOP_KEY = "minps"
     best, patience = -1, 0
     for ep in range(1, EPOCHS + 1):
         tr, _, _ = run(dl_tr, True)
-        va, yv, pv = run(dl_va, False)
+        va, _, _ = run(dl_va, False)
 
-        if TASK in {"outcome", "readmission"}:
-            prob = torch.sigmoid(torch.tensor(pv)).numpy()
-            thr, sens_val = best_sens_threshold(yv, prob)
-            va["best_sens"] = sens_val
+        print(f"E{ep:02d}",
+              {k: f'{v:.3f}' for k, v in tr.items()},
+              "||",
+              {k: f'{v:.3f}' for k, v in va.items()})
 
-        print(
-            f"E{ep:02d} ",
-            {k: f"{v:.3f}" for k, v in tr.items()},
-            "||",
-            {k: f"{va[k]:.3f}" for k in ['auroc', 'auprc', 'minps', 'loss'] if k in va}
-        )
-
-        if va.get(STOP_KEY, -1) > best:
+        if va[STOP_KEY] > best:
             best, patience = va[STOP_KEY], 0
             torch.save(model.state_dict(),
                        CACHE_DIR / f"best_model_{DATASET}_{TASK}.pt")
-            if TASK in {"outcome", "readmission"}:
-                with open(CACHE_DIR / "best_threshold.txt", "w") as f:
-                    f.write(f"{thr:.4f}")
         else:
             patience += 1
             if patience >= 3:
                 print(f"Early stopped. Best {STOP_KEY} = {best:.3f}")
                 break
-    print("✔ Best model & threshold saved")
+
 
 if __name__ == "__main__":
     main()
+

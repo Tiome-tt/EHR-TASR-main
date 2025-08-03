@@ -8,7 +8,7 @@ from config.config import DATASET, ROOT, BLOCK_LEN, POOL_DIM, SEED
 
 SRC_CSV   = f"{ROOT}/data/{DATASET}/preprocessed/timeseries_{DATASET}.csv"
 OUT_DIR   = f"{ROOT}/data/{DATASET}/preprocessed/splits"
-RATIO     = (0.8, 0.1, 0.1) # split data ratio
+RATIO     = (0.7, 0.1, 0.2) # split data ratio
 CLIP_LOW, CLIP_HIGH = -250, 250 # isolate dirty data
 
 COLUMN_MAP = {
@@ -76,30 +76,39 @@ def _score_gcs(row) -> float:
 CONT_FEATS = ["age", "dbp", "sbp", "mbp", "hr", "rr", "temp",
               "spo2", "fio2", "glucose", "ph"]
 
-def time_aware_score(csv_path:str, block_len=5)->Dict[Tuple[str,str],List[float]]:
-    df=pd.read_csv(csv_path)
-    df[COLUMN_MAP["time"]]=pd.to_datetime(df[COLUMN_MAP["time"]])
-    df=df.sort_values([COLUMN_MAP["patient_id"],COLUMN_MAP["visit_id"],COLUMN_MAP["time"]])
+def time_aware_score(csv_path: str, block_lens=BLOCK_LEN) -> Dict[Tuple[str, str], List[float]]:
+    df = pd.read_csv(csv_path)
+    df[COLUMN_MAP["time"]] = pd.to_datetime(df[COLUMN_MAP["time"]])
+    df = df.sort_values([COLUMN_MAP["patient_id"], COLUMN_MAP["visit_id"], COLUMN_MAP["time"]])
 
     for feat in CONT_FEATS:
-        df[f"score_{feat}"]=df[COLUMN_MAP[feat]].apply(_score_continuous,feat=feat)
-    df["score_cap_refill"]=df.apply(_score_cap_refill,axis=1)
-    df["score_gcs"]       =df.apply(_score_gcs,axis=1)
-    fea_cols=[c for c in df.columns if c.startswith("score_") and c!="score_gcs"]
+        df[f"score_{feat}"] = df[COLUMN_MAP[feat]].apply(_score_continuous, feat=feat)
+    df["score_cap_refill"] = df.apply(_score_cap_refill, axis=1)
+    df["score_gcs"] = df.apply(_score_gcs, axis=1)
+    fea_cols = [c for c in df.columns if c.startswith("score_") and c != "score_gcs"]
 
-    tas={}
-    for (pid,vid), g in tqdm(df.groupby([COLUMN_MAP["patient_id"],COLUMN_MAP["visit_id"]]),
-                             desc="TAS calc",unit="visit"):
-        seq=[]
-        g=g.reset_index(drop=True)
-        for st in range(len(g)-block_len+1):
-            blk=g.iloc[st:st+block_len]
-            gcs=blk["score_gcs"].mean(skipna=True)
-            fea=blk[fea_cols].mean(skipna=True).mean(skipna=True)
-            gcs=0 if pd.isna(gcs) else gcs
-            fea=0 if pd.isna(fea) else fea
-            seq.append(float((gcs*4/15+fea)/8))
-        tas[(pid,vid)]=seq
+    tas = {}
+    for (pid, vid), g in tqdm(df.groupby([COLUMN_MAP["patient_id"], COLUMN_MAP["visit_id"]]), desc="TAS calc", unit="visit"):
+        g = g.reset_index(drop=True)
+        L = len(g)
+
+        all_scores = []
+
+        for blk_len in block_lens:
+            if blk_len == "full":
+                blk_len = L
+            if L < blk_len:
+                continue
+            for st in range(L - blk_len + 1):
+                blk = g.iloc[st:st + blk_len]
+                gcs = blk["score_gcs"].mean(skipna=True)
+                fea = blk[fea_cols].mean(skipna=True).mean(skipna=True)
+                gcs = 0 if pd.isna(gcs) else gcs
+                fea = 0 if pd.isna(fea) else fea
+                score = float((gcs * 4 / 15 + fea) / 8)
+                all_scores.append(score)
+
+        tas[(pid, vid)] = all_scores
     return tas
 
 def pool_sequence(seq:List[float], dim=24)->np.ndarray:
@@ -134,15 +143,21 @@ def robust_minmax(col, mn, mx, lo, hi):
 
 if __name__ == "__main__":
     os.makedirs(OUT_DIR, exist_ok=True)
-    print(f"----------Read {DATASET} data----------");
+    print(f"----------Read {DATASET} data----------")
     df_ts = pd.read_csv(SRC_CSV)
 
-    print("----------Calculate TAS----------");
-    tas = time_aware_score(SRC_CSV, BLOCK_LEN)
-    print(f"----------Pooling to {POOL_DIM} dimentions----------");
+    print("----------Calculate TAS----------")
+    # 多尺度滑窗
+    tas = time_aware_score(SRC_CSV, block_lens=BLOCK_LEN)
+
+    print(f"----------Pooling to {POOL_DIM} dimentions----------")
     df_visit = build_visit_df(tas, POOL_DIM)
     df_all = df_ts.merge(df_visit, on=["PatientID", "VisitID"], how="left") \
         .drop(columns=[c for c in ["RecordTimestamp", "AdmissionTime", "DischargeTime"] if c in df_ts])
+
+    outcome_max = (df_all.groupby("PatientID")["Outcome"]
+                   .max())
+    df_all["Outcome"] = df_all["PatientID"].map(outcome_max)
 
     print("----------Positional encoding----------")
     visit_unique = (df_all[["PatientID", "VisitID"]]
@@ -154,7 +169,7 @@ if __name__ == "__main__":
                                         (visit_unique["rank_visit"] - 1) / (visit_unique["n_visit"] - 1))
     df_all = df_all.merge(visit_unique[["PatientID", "VisitID", "VisitPos"]],
                           on=["PatientID", "VisitID"], how="left")
-    df_all["VisitID"] = df_all["VisitPos"];
+    df_all["VisitID"] = df_all["VisitPos"]
     df_all = df_all.drop(columns="VisitPos")
 
     df_all["rank_rec"] = df_all.groupby(["PatientID", "VisitID"]).cumcount() + 1
@@ -185,12 +200,13 @@ if __name__ == "__main__":
     #         if df_[c].dtype != np.float32:
     #             df_[c] = df_[c].astype(np.float32)
     #         df_.loc[:, c] = result
+
     for df_ in (df_tr, df_val, df_te):
         for c, (mn, mx) in stats.items():
             result = robust_minmax(df_[c], mn, mx, CLIP_LOW, CLIP_HIGH)
             df_.loc[:, c] = np.nan_to_num(result, nan=0.0).astype(np.float32)
 
-    # Save results
+
     label_cols = ["Outcome", "LOS", "Readmission"]
     feat_cols = [c for c in df_all.columns if c not in label_cols]
     for tag, d in zip(["train", "val", "test"], [df_tr, df_val, df_te]):
@@ -202,15 +218,30 @@ if __name__ == "__main__":
     for tag, d in zip(["train", "val", "test"], [df_tr, df_val, df_te]):
         print(f"{tag:5}", d.shape)
 
-# split CMPs file
+# ----------Split CMPs file & compute GapTime----------
 print("----------Split CMPs file----------")
 
-# datapath
-CMP_CSV   = f"{ROOT}/data/{DATASET}/preprocessed/CMPs_{DATASET}.csv"
-CMP_COLS  = ["PatientID", "VisitID",
-             "Conditions_Long", "Medications", "Procedures_Long"]
+CMP_CSV  = f"{ROOT}/data/{DATASET}/preprocessed/CMPs_{DATASET}.csv"
+
+CMP_COLS = ["PatientID", "VisitID",
+            "AdmissionTime", "DischargeTime",
+            "Conditions_Long", "Medications", "Procedures_Long"]
 
 df_cmp = pd.read_csv(CMP_CSV, usecols=CMP_COLS)
+
+# compute GapTime (day)
+df_cmp["AdmissionTime"]  = pd.to_datetime(df_cmp["AdmissionTime"])
+df_cmp["DischargeTime"]  = pd.to_datetime(df_cmp["DischargeTime"])
+
+df_cmp = df_cmp.sort_values(["PatientID", "AdmissionTime"])
+
+prev_discharge = (df_cmp
+                  .groupby("PatientID")["DischargeTime"]
+                  .shift())
+
+df_cmp["GapTime"] = (df_cmp["AdmissionTime"] - prev_discharge).dt.days.astype("float32")
+
+df_cmp = df_cmp.drop(columns=["AdmissionTime", "DischargeTime"])
 
 # unique set
 pids_tr  = set(df_tr["PatientID"].unique())
@@ -222,11 +253,43 @@ df_cmp_val = df_cmp[df_cmp["PatientID"].isin(pids_val)]
 df_cmp_te  = df_cmp[df_cmp["PatientID"].isin(pids_te)]
 
 # save to csv
-df_cmp_tr.to_csv(f"{OUT_DIR}/train_cmps.csv", index=False)
-df_cmp_val.to_csv(f"{OUT_DIR}/val_cmps.csv",   index=False)
-df_cmp_te.to_csv(f"{OUT_DIR}/test_cmps.csv",  index=False)
+keep_cols = ["PatientID", "VisitID", "GapTime",
+             "Conditions_Long", "Medications", "Procedures_Long"]
+
+df_cmp_tr [keep_cols].to_csv(f"{OUT_DIR}/train_cmps.csv", index=False)
+df_cmp_val[keep_cols].to_csv(f"{OUT_DIR}/val_cmps.csv",   index=False)
+df_cmp_te [keep_cols].to_csv(f"{OUT_DIR}/test_cmps.csv",  index=False)
 
 print("CMPs split saved:",
       {k: v.shape for k, v in
        zip(["train", "val", "test"],
            [df_cmp_tr, df_cmp_val, df_cmp_te])})
+
+def task_stats(tag: str, df: pd.DataFrame, tasks: List[str]) -> None:
+    print(f"\n===== {tag.upper()} SET =====")
+    print(f"Total rows      : {len(df):,}")
+    print(f"Unique patients : {df['PatientID'].nunique():,}")
+
+    visit_grp   = df.groupby(['PatientID', 'VisitID'])
+    patient_grp = df.groupby('PatientID')
+
+    avg_visits_per_patient = visit_grp.ngroups / patient_grp.ngroups
+    print(f"Avg visits/patient: {avg_visits_per_patient:.2f}")
+
+    for t in tasks:
+        visit_lbl = visit_grp[t].max()
+        pos_v = (visit_lbl > 0).sum()
+        neg_v = (visit_lbl == 0).sum()
+
+        patient_lbl = patient_grp[t].max()
+        pos_p = (patient_lbl > 0).sum()
+        neg_p = (patient_lbl == 0).sum()
+
+        print(f"{t:<12} | Visit‑level  Pos:{pos_v:6}  Neg:{neg_v:6}  "
+              f"Pos‑Ratio:{pos_v/(pos_v+neg_v):.3%}  |  "
+              f"Patient‑level  Pos:{pos_p:6}  Neg:{neg_p:6}  "
+              f"Pos‑Ratio:{pos_p/(pos_p+neg_p):.3%}")
+
+label_cols = ["Outcome", "Readmission"]
+for tag, d in zip(["train", "val", "test"], [df_tr, df_val, df_te]):
+    task_stats(tag, d, label_cols)

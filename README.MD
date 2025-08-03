@@ -1,21 +1,67 @@
-Code for paper "waiting for name"
+# Code for the Paper: **"EHR-TARS: Leveraging Time-Aware Scoring and LLM Reasoning for Patient Risk Assessment"**
 
-### 🚀quick start
-✅Step 1. Dataset Formatting
+### 🚀 Quick Start
 
-Due to regulations, we cannot provide the MIMIC dataset. You will need to download it yourself from the official website.
+---
 
-1).Download the MIMIC-III and MIMIC-IV datasets from their official website and import them into PostgreSQL.
+#### ✅ Step 1. Dataset Preparation
 
-2).Run `sql/MIMIC-III.sql` and `sql/MIMIC-IV.sql` in PostgreSQL, and export the results to CSV files. Then, place the generated CSV files in the data directory, for example:
-`data/mimic3/format_mimic3_anonymized.csv` and `data/mimic4/format_mimic4_anonymized.csv`.
+Due to data-sharing regulations, we cannot provide the MIMIC datasets. Please download them yourself from the official website.
 
-✅Step 2. Environment Setup
+1. Download the **MIMIC-III** and **MIMIC-IV** datasets and import them into **PostgreSQL**.
 
-You can easily set up the environment by installing the required dependencies using the provided `requirements.txt` file by running `pip install -r requirements.txt` in the terminal.
+2. Run the SQL scripts `sql/MIMIC-III.sql` and `sql/MIMIC-IV.sql` in PostgreSQL, then export the query results to CSV files.
 
-✅Step 3. Data Preprocessing
+3. Place the exported CSV files in the `data` directory, for example:  
 
-Run `data/mimic3/preprocessing_mimic3.ipynb` and `data/mimic3/preprocessing_mimic3.ipynb` to preprocess the data
+   ```
+   data/mimic3/format_mimic3_anonymized.csv  
+   data/mimic4/format_mimic4_anonymized.csv
+   ```
 
-✅Step 4.
+---
+
+#### ✅ Step 2. Environment Setup
+
+Set up your environment by installing the required dependencies:
+
+```bash
+pip install -r requirements.txt
+```
+
+---
+
+#### ✅ Step 3. Data Preprocessing
+
+1. Modify the configuration file `config/config.py` to specify your task and dataset.
+2. Run the preprocessing notebooks:
+   - `data/mimic3/preprocessing_mimic3.ipynb`
+   - `data/mimic4/preprocessing_mimic4.ipynb`
+
+---
+
+#### ✅ Step 4. Compute Multi-Scale Temporally-Aware Scores & Train Sequence Models
+
+1. Run `timeAwareScore.py` to compute temporal awareness scores.
+2. Run `ehr_tas_trainer.py` to train the sequence model.
+
+---
+
+#### ✅ Step 5. Fine-Tune the Local-Reasoning LLM & Perform Final Ensemble Prediction
+
+1. Run `reasoning_generation.py` to deploy the 32B model and generate reasoning chains for training.
+
+2. Run `filter.py` to remove problematic data.
+
+3. Execute `ftData_generate.py` to create the fine-tuning dataset.  
+   The generated dataset will be saved to:
+
+   ```
+   data/{datasets}/preprocessed/cache
+   ```
+
+4. Use [LLaMA-Factory](https://github.com/hiyouga/LLaMA-Factory) to fine-tune your model using this dataset.
+
+5. Finally, run `main.py` to perform the ensemble prediction.
+
+---
