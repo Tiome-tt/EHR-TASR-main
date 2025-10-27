@@ -1,4 +1,4 @@
-# Code for the Paper: **"EHR-TARS: Leveraging Time-Aware Scoring and LLM Reasoning for Patient Risk Assessment"**
+# Code for the Paper: **"EHR-TASR: Leveraging Time-Aware Scoring and LLM Reasoning for Clinical Prediction"**
 
 ### 🚀 Quick Start
 
@@ -63,5 +63,7 @@ pip install -r requirements.txt
 4. Use [LLaMA-Factory](https://github.com/hiyouga/LLaMA-Factory) to fine-tune your model using this dataset.
 
 5. Finally, run `main.py` to perform the ensemble prediction.
+
+Note: When running different datasets, you need to delete the [.npz](file://D:\LearningFiles\EHRScore\data\mimic3\preprocessed\cache\val.npz) files in `data/{datasets}/preprocessed/cache`.
 
 ---

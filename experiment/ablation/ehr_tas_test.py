@@ -56,7 +56,7 @@ recall    = recall_score(y_true, y_pred)
 min_ps    = min(precision, recall)
 avg_loss  = tot_loss / len(y_true)
 
-print(f"Threshold used: {threshold:.3f}")
+# print(f"Threshold used: {threshold:.3f}")
 print(f"AUROC  : {auroc:.4f}")
 print(f"AUPRC  : {auprc:.4f}")
 print(f"min(P,S): {min_ps:.4f}   "

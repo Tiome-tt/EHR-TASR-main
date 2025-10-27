@@ -22,8 +22,9 @@ LR          = LR
 HIDDEN      = HIDDEN
 MLP_HIDDEN  = MLP_HIDDEN
 LOS_TOL     = LOS_TOLERANCE
-TIME_AWARE_SCORE = False  # Whether to remove the time-aware score column
+TIME_AWARE_SCORE = True  # Whether to remove the time-aware score column
 THRESHOLD_CLASSIFICATION = False  # Whether to set the classification threshold to 0.5
+CLASSIFICATION_THRESHOLD = 0.5
 
 SPLIT_DIR = Path(f"data/{DATASET}/preprocessed/splits")
 CACHE_DIR = Path(f"data/{DATASET}/preprocessed/cache")
@@ -140,14 +141,21 @@ def main():
                     mse(p[:, 1], t[:, 1]) +
                     bce2(p[:, 2], t[:, 2]))
 
-    optimizer = optim.AdamW(model.parameters(), lr=LR)
+    optimizer = optim.AdamW(model.parameters(), lr=LR, weight_decay=0.1)
+    # optimizer = optim.AdamW(model.parameters(), lr=LR)
 
     # ---------- define the best threshold ----------
-    def best_f1_threshold(y_true, y_prob):
+    def best_minps_threshold(y_true, y_prob):
         ths = np.linspace(0.05, 0.95, 19)
-        f1s = [f1_score(y_true, y_prob >= t) for t in ths]
-        i   = int(np.argmax(f1s))
-        return ths[i], f1s[i]
+        minps_scores = []
+        for t in ths:
+            pred_binary = y_prob >= t
+            precision = precision_score(y_true, pred_binary, zero_division=0)
+            recall = recall_score(y_true, pred_binary, zero_division=0)
+            minps = min(precision, recall)
+            minps_scores.append(minps)
+        i = int(np.argmax(minps_scores))
+        return ths[i], minps_scores[i]
 
     def run(loader, train):
         model.train(train)
@@ -155,11 +163,12 @@ def main():
         with torch.set_grad_enabled(train):
             for x, mask, y in loader:
                 x, mask, y = x.to(device), mask.to(device), y.to(device)
-                pred = model(x, mask)  # logits
+                pred = model(x, mask)
                 loss = criterion(pred, y)
                 if train:
                     optimizer.zero_grad()
                     loss.backward()
+                    torch.nn.utils.clip_grad_norm_(model.parameters(), max_norm=1.0)
                     optimizer.step()
                 tot += loss.item() * len(y)
                 ys.append(y.cpu().numpy())
@@ -169,9 +178,14 @@ def main():
         ps = np.concatenate(ps)
         prob = torch.sigmoid(torch.tensor(ps)).numpy()
 
+        if THRESHOLD_CLASSIFICATION and not train:
+            best_thresh, _ = best_minps_threshold(ys, prob)
+            threshold = best_thresh
+        else:
+            threshold = CLASSIFICATION_THRESHOLD
 
-        precision = precision_score(ys, prob >= 0.5)
-        recall = recall_score(ys, prob >= 0.5)
+        precision = precision_score(ys, prob >= threshold, zero_division=0)
+        recall = recall_score(ys, prob >= threshold, zero_division=0)
         min_ps = min(precision, recall)
 
         met = dict(
@@ -184,9 +198,10 @@ def main():
 
     STOP_KEY = "minps"
     best, patience = -1, 0
+
     for ep in range(1, EPOCHS + 1):
         tr, _, _ = run(dl_tr, True)
-        va, _, _ = run(dl_va, False)
+        va, ys_va, prob_va = run(dl_va, False)
 
         print(f"E{ep:02d}",
               {k: f'{v:.3f}' for k, v in tr.items()},
@@ -195,8 +210,13 @@ def main():
 
         if va[STOP_KEY] > best:
             best, patience = va[STOP_KEY], 0
+
             torch.save(model.state_dict(),
                        CACHE_DIR / f"best_model_{DATASET}_{TASK}.pt")
+
+            best_thresh, _ = best_minps_threshold(ys_va, prob_va)
+            with open(CACHE_DIR / "best_threshold.txt", "w") as f:
+                f.write(str(float(best_thresh)))
         else:
             patience += 1
             if patience >= 3:

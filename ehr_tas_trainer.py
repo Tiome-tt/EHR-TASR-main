@@ -1,4 +1,4 @@
-# best_auprc
+
 import math, joblib, numpy as np, pandas as pd
 from pathlib import Path
 from sklearn.preprocessing import FunctionTransformer
@@ -8,7 +8,7 @@ from sklearn.metrics import (roc_auc_score,
 import torch, torch.nn as nn, torch.optim as optim
 
 from config.config import (TASK, EPOCHS, BATCH_SIZE, LR, HIDDEN,
-                           LOS_TOLERANCE, DATASET, MLP_HIDDEN)
+                           LOS_TOLERANCE, DATASET, MLP_HIDDEN, ROOT)
 from model.ehrPredictModel import EHRPredictor
 
 # ---------- config ----------
@@ -20,8 +20,8 @@ HIDDEN      = HIDDEN
 MLP_HIDDEN  = MLP_HIDDEN
 LOS_TOL     = LOS_TOLERANCE
 
-SPLIT_DIR = Path(f"data/{DATASET}/preprocessed/splits")
-CACHE_DIR = Path(f"data/{DATASET}/preprocessed/cache")
+SPLIT_DIR = Path(f"{ROOT}/data/{DATASET}/preprocessed/splits")
+CACHE_DIR = Path(f"{ROOT}/data/{DATASET}/preprocessed/cache")
 CACHE_DIR.mkdir(parents=True, exist_ok=True)
 
 # Data processing
@@ -50,7 +50,7 @@ def main():
         if TASK == "readmission":
             y = (y_all.sort_values(["PatientID", "VisitID"])
                  .groupby("PatientID", as_index=False)
-                 .tail(1))  # ⇦ keep LAST
+                 .tail(1))
         else:
             y = (y_all.sort_values(["PatientID", "VisitID"])
                  .groupby("PatientID", as_index=False)
@@ -127,17 +127,18 @@ def main():
                     mse(p[:, 1], t[:, 1]) +
                     bce2(p[:, 2], t[:, 2]))
 
-    optimizer = optim.AdamW(model.parameters(), lr=LR)
+    optimizer = optim.AdamW(model.parameters(), lr=LR, weight_decay=0.1)
+    # optimizer = optim.AdamW(model.parameters(), lr=LR)
 
     # ---------- define the best threshold (sensitivity-driven) ----------
     def best_sens_threshold(y_true, y_prob):
-        ths = np.linspace(0.05, 0.95, 19)
+        ths = np.linspace(0.01, 0.99, 19)
         sens = [recall_score(y_true, y_prob >= t) for t in ths]
         i   = int(np.argmax(sens))
         return ths[i], sens[i]
 
     def min_p_sens(y_true, y_prob):
-        ths = np.linspace(0.05, 0.95, 19)
+        ths = np.linspace(0.01, 0.99, 19)
         best = 0.0
         for t in ths:
             p = precision_score(y_true, y_prob >= t, zero_division=0)
@@ -157,6 +158,9 @@ def main():
                 if train:
                     optimizer.zero_grad()
                     loss.backward()
+
+                    torch.nn.utils.clip_grad_norm_(model.parameters(), max_norm=1.0)
+
                     optimizer.step()
                 tot += loss.item() * len(y)
                 ys.append(y.cpu().numpy())
@@ -167,7 +171,7 @@ def main():
             met = dict(
                 auroc=roc_auc_score(ys, prob),
                 auprc=average_precision_score(ys, prob),
-                minps=min_p_sens(ys, prob)  # ← 新增
+                minps=min_p_sens(ys, prob)
 
             )
 

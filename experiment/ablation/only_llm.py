@@ -1,3 +1,4 @@
+# Hard label 0/1
 import os, re, json, numpy as np, pandas as pd, torch.multiprocessing as mp
 mp.set_start_method("spawn", force=True)
 os.environ["CUDA_VISIBLE_DEVICES"] = "0"
@@ -82,7 +83,7 @@ if todo_pids:
 
     sys_prompt = ("You are a clinical-reasoning assistant that reads structured "
                   "EHR data and outputs a concise reasoning chain and a prediction.")
-    task_desc  = TASK_DESCRIPTIONS["Outcome"].strip()
+    task_desc = TASK_DESCRIPTIONS["Outcome" if TASK.lower()=="outcome" else "Readmission"].strip()
     preamble   = ("Given the following task description and patient EHR context, "
                  "provide a step-by-step reasoning chain and the predicted outcome (0/1).\n")
 
@@ -137,7 +138,7 @@ Response:"""
               gpu_memory_utilization=0.9)
 
     sampling = SamplingParams(
-        temperature=0,
+        temperature=0.1,
         top_p=0.9,
         max_tokens=8192,
         stop=[

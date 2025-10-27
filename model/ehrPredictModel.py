@@ -51,7 +51,7 @@ class EHRPredictor(nn.Module):
         dim_in: int,
         hidden: int = 128,
         mlp_hidden: int = 64,
-        dropout: float = 0.3,
+        dropout: float = 0.1,
         out_dim: int = 1,
     ):
         super().__init__()
