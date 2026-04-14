@@ -61,9 +61,24 @@ pip install -r requirements.txt
    ```
 
 4. Use [LLaMA-Factory](https://github.com/hiyouga/LLaMA-Factory) to fine-tune your model using this dataset.
+## Citation
+
+If you find this paper or code useful for your research, please consider citing our work:
 
 5. Finally, run `main.py` to perform the ensemble prediction.
 
 Note: When running different datasets, you need to delete the [.npz](file://D:\LearningFiles\EHRScore\data\mimic3\preprocessed\cache\val.npz) files in `data/{datasets}/preprocessed/cache`.
 
 ---
+
+### BibTeX:
+```bibtex
+@inproceedings{meng2026ehrtasr,
+  title={{EHR-TASR}: Leveraging Time-Aware Scoring and LLM Reasoning for Clinical Prediction},
+  author={Meng, Xiaoyang and Zhou*, Xiaoding and Liu, Yang and Zhang*, Weiyu and Guan, Hongjiao and Peng, Xueping and Lu, Wenpeng},
+  booktitle={The International Joint Conference on Neural Networks (IJCNN 2026)},
+  address={Netherlands},
+  year={2026},
+  organization={IEEE},
+  url={[https://github.com/Tiome-tt/EHR-TASR-main](https://github.com/Tiome-tt/EHR-TASR-main)}
+}
