@@ -61,9 +61,6 @@ pip install -r requirements.txt
    ```
 
 4. Use [LLaMA-Factory](https://github.com/hiyouga/LLaMA-Factory) to fine-tune your model using this dataset.
-## Citation
-
-If you find this paper or code useful for your research, please consider citing our work:
 
 5. Finally, run `main.py` to perform the ensemble prediction.
 
@@ -71,7 +68,10 @@ Note: When running different datasets, you need to delete the [.npz](file://D:\L
 
 ---
 
-### BibTeX:
+### Citation
+
+If you find this paper or code useful for your research, please consider citing our work:
+
 ```bibtex
 @inproceedings{meng2026ehrtasr,
   title={{EHR-TASR}: Leveraging Time-Aware Scoring and LLM Reasoning for Clinical Prediction},
